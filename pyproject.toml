@@ -1,0 +1,13 @@
+[project]
+name = "observer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=50.0.1",
+    "networkx>=3.7",
+    "opentelemetry-distro>=0.65b0",
+    "opentelemetry-exporter-otlp>=1.44.0",
+    "pyjwt>=2.14.0",
+]
