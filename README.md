@@ -47,6 +47,7 @@ Three independent views of the same run are produced:
 | **Causal graph** | Projection of events into a directed graph | Mermaid / DOT / SVG / ASCII |
 
 ---
+
 ## Visualization
 
 The causal graph for one run. Node colors mark the actor; node shapes mark the event type (circle = workflow boundary, parallelogram = agent activation, flag = delegation, stadium = artifact, rectangle = everything else). **Solid thick arrows (`==>`) are causal edges** (`caused_by`); **dotted arrows (`-.->`) are structural containment** (`parent_span_id`).
@@ -54,6 +55,7 @@ The causal graph for one run. Node colors mark the actor; node shapes mark the e
 Note that solid arrows cross subgraph boundaries — that's causation across agent traces. Dotted arrows never do — structural nesting stays within one agent's trace.
 
 The graph below is from one representative run; session ids and costs will differ on your machine, but the topology is identical.
+
 ```mermaid
 flowchart TD
   subgraph g_11aa035cfdac950d9bd4db06502b0594["user"]
@@ -158,8 +160,9 @@ flowchart TD
   class n0,n33 g_user
 ```
 
-
 For a static render, `docs/causal_graph.svg` (produced by the run) is the same graph exported by Graphviz.
+
+---
 
 ## Requirements
 
@@ -187,45 +190,59 @@ pip install opentelemetry-sdk opentelemetry-api networkx pyjwt cryptography
 
 ## Run
 
-Two entry points, both in `main.py`:
+One entry point, two scenarios:
 
 ```bash
-python main.py                     # runs main() — single workflow, full chain + graph
+python main.py single     # one workflow — full chain, cost report, causal graph
+python main.py three      # three workflows — happy path, span-linked, error path
 ```
 
-`main()` runs one workflow end-to-end and writes graph artifacts to `./docs/`:
+Both write the same graph artifacts to `./docs/`:
 
-1. JSON span dump (one object per span, printed at `span.end()`)
+| File | Contents |
+|---|---|
+| `docs/causal_graph.mmd` | Mermaid source — paste at <https://mermaid.live> |
+| `docs/causal_graph.dot` | Graphviz source — `dot -Tsvg -o docs/causal_graph.svg docs/causal_graph.dot` |
+| `docs/causal_graph.md` | Fenced ` ```mermaid ` block, paste-ready for a README |
+
+Overwritten on each run, so the same paths always reflect the latest execution.
+
+### Scenario: `single`
+
+Runs one workflow end-to-end and prints:
+
+1. The JSON span dump (one object per span, at `span.end()`)
 2. The human-readable causal chain of the final object
 3. A cost report aggregated by `session_id`
-4. `docs/causal_graph.{mmd,dot,md}`
+4. The graph artifacts listed above
 
-To exercise the three-workflow demo (disjoint workflows, span links, error path):
+### Scenario: `three`
 
-```bash
-python -c "from main import main2; main2()"
-```
+Runs three workflows in one event store and prints:
 
-`main2()` runs three workflows in one store:
+- **W1** — happy path (`Analyze security logs for anomalies`)
+- **W2** — a separate workflow whose root span is `Link`-ed to W1's root — *temporal, not causal*
+- **W3** — error path where a tool raises and the workflow unwinds cleanly
 
-- **W1** — happy path
-- **W2** — a separate workflow whose root span is `Link`-ed to W1's root (temporal, not causal)
-- **W3** — error path where a tool raises and the workflow unwinds
+Then per-workflow cost reports and a **DAG validation** summary that asserts session ids are unique, each workflow contributes exactly one root, and zero `causes` edges cross a session boundary. The last check is the property the trial tests: two workflows may share a store and even a `Link`, but they must not share causality.
 
-and prints per-workflow cost reports plus a DAG validation summary.
+### Why a CLI
+
+There is one entry point (`main()`), not a `main()` plus a `main2()`. Both scenarios share the same primitives — `run_workflow`, `_write_graph`, `_validate_disjoint` — so duplicating the setup in two functions would only add drift. `argparse` gives each scenario a name, documents itself via `--help`, and keeps the two paths from diverging.
 
 ### Rendering the graph
 
 - **Mermaid:** paste `docs/causal_graph.mmd` at <https://mermaid.live>, or open `docs/causal_graph.md` in VS Code with a Mermaid preview extension
-- **Graphviz:** `dot -Tsvg -o docs/causal_graph.svg docs/causal_graph.dot`
-- **PNG:** `dot -Tpng -o docs/causal_graph.png docs/causal_graph.dot`
+- **Graphviz SVG:** `dot -Tsvg -o docs/causal_graph.svg docs/causal_graph.dot`
+- **Graphviz PNG:** `dot -Tpng -o docs/causal_graph.png docs/causal_graph.dot`
+
 ---
 
 ## Repository layout
 
 | File | Purpose |
 |---|---|
-| `main.py` | `run_workflow`, `main()` (single run), `main2()` (three-run demo) |
+| `main.py` | `run_workflow`, `scenario_single`, `scenario_three`, CLI dispatch |
 | `agents.py` | `BaseAgent` and the four agent implementations |
 | `message_bus.py` | `InterAgentMessage`, in-process `MessageBus` |
 | `models.py` | `CausalEvent`, `CostReport` |
@@ -234,17 +251,20 @@ and prints per-workflow cost reports plus a DAG validation summary.
 | `tracing.py` | OpenTelemetry provider + exporter |
 | `graph.py` | `CausalGraphBuilder`, Mermaid/DOT/ASCII exporters |
 | `audit.py` | `causal_chain`, `cost_report` |
-| `docs/` | Generated graph artifacts |
+| `docs/` | Generated graph artifacts; `causal_graph.svg` is what the README embeds |
 
 ---
 
 ## Sample output
 
-From the happy path:
+<!-- UPDATE AFTER RUN: regenerate with `python main.py single` and paste the
+     real output below, including the correct session id in the cost report. -->
+
+From `python main.py single`:
 
 ```
-trace_id   = 903f5a6686a6...              (root trace id)
-session_id = 4b414aa0b919                 (workflow correlation key)
+trace_id   = 11aa035cfdac950d9bd4db06502b0594
+session_id = 4b414aa0b919
 
 obj-c0a8e79e6803 (claim)
   <- agent_d (fafc8e3c) agent_d.llm.requested  model=gpt-4o-mini
@@ -272,7 +292,7 @@ obj-c0a8e79e6803 (claim)
 
 ```
 ============================================================
-COST REPORT - trace 903f5a6686a6...
+COST REPORT - session 4b414aa0b919...
 ============================================================
   LLM calls:    4
   Tool calls:   3
@@ -303,7 +323,7 @@ COST REPORT - trace 903f5a6686a6...
   total cost      : $0.0093
 ```
 
-### DAG validation (from `main2()`)
+### DAG validation (from `python main.py three`)
 
 ```
 nodes=80  edges=107
@@ -311,7 +331,7 @@ OK - 3 disjoint causal DAGs, no shared causes-edges
 causes-only subgraph: 80 nodes, 77 edges
 ```
 
-### Error path
+### Error path (from `python main.py three`)
 
 ```
 chain to failure:
@@ -398,7 +418,7 @@ This eliminates false edges like `llm.responded → tool.requested` that the imp
 
 ### 5. Temporal ordering is a different relation
 
-`main2()` demonstrates this directly: W2 is `Link`-ed to W1 at the root span level, so a backend can see that W2 happened after W1. But no event in W2 has `caused_by` pointing at any event in W1 — and the DAG validation asserts that zero `causes` edges cross a `session_id` boundary. **The link records temporal ordering; the absence of a shared `caused_by` records that W1 did not cause W2.**
+`python main.py three` demonstrates this directly: W2 is `Link`-ed to W1 at the root span level, so a backend can see that W2 happened after W1. But no event in W2 has `caused_by` pointing at any event in W1 — and the DAG validation asserts that zero `causes` edges cross a `session_id` boundary. **The link records temporal ordering; the absence of a shared `caused_by` records that W1 did not cause W2.**
 
 ### 6. Authorization is bound to the same key
 
@@ -483,9 +503,8 @@ That is exactly what this codebase implements, at four agents, in one process.
 | Parent/child event relationships | `parent_span_id` (structural) + `caused_by` (causal) |
 | Trace/correlation IDs | `trace_id` + `workflow.root_trace_id` + `session_id` |
 | Graph/structured output | `docs/causal_graph.{mmd,dot,md}`, `to_ascii()` |
-| Simple visualization | `docs/causal_graph.svg` + `.mmd` (renderable at mermaid.live) |
 | OpenTelemetry | `PRODUCER`/`CONSUMER` kinds + `Link` for cross-agent edges |
 | Working source + setup/run | this repository |
 | Example telemetry output | § *Sample output* |
-| Simple visualization | `docs/causal_graph_*.svg`, renderable at mermaid.live |
+| Simple visualization | `docs/causal_graph.svg` + `.mmd` (renderable at mermaid.live) |
 | Design writeup | § *How causality is preserved*, § *Limitations*, § *Scaling* |

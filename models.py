@@ -74,7 +74,7 @@ class CostReport:
 
     def print(self) -> None:
         print("\n" + "=" * 60)
-        print(f"COST REPORT - trace {self.trace_id[:12]}...")
+        print(f"COST REPORT - session {self.trace_id[:12]}...")
         print("=" * 60)
         print(f"  LLM calls:    {self.llm_calls}")
         print(f"  Tool calls:   {self.tool_calls}")
@@ -83,6 +83,7 @@ class CostReport:
         print(f"  LLM cost:     ${self.llm_usd:.4f}")
         print(f"  Tool cost:    ${self.tool_usd:.4f}")
         print(f"  Total:        ${self.total_usd:.4f}")
+
         if self.cache_saved_usd:
             print(f"  Cache saved:  ${self.cache_saved_usd:.4f}")
         print("  Breakdown:")

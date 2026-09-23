@@ -1,10 +1,10 @@
 ```mermaid
 flowchart TD
-  subgraph g_11aa035cfdac950d9bd4db06502b0594["user"]
+  subgraph g_c6682a8c64b09e067c44c206b64aa4d7["user"]
     n0((task.started))
     n33((task.completed))
   end
-  subgraph g_e588f28ae0d0f0c407bfb817ac2f1e2d["agent_a"]
+  subgraph g_373f26d3e98beeb8a117594c311d22b6["agent_a"]
     n1[/activated/]
     n2[llm.requested]
     n3[llm.responded $0.0021]
@@ -13,7 +13,7 @@ flowchart TD
     n31[reply.received]
     n32[returned]
   end
-  subgraph g_3fecdf53ebbc16ec23335cf192a14fb7["agent_b"]
+  subgraph g_a881181d9f4315bfb392bc65f4ee5d05["agent_b"]
     n6[/activated/]
     n7[llm.requested]
     n8[llm.responded $0.0021]
@@ -24,7 +24,7 @@ flowchart TD
     n29[reply.received]
     n30[returned]
   end
-  subgraph g_c7520b8cb7a438a233094f767d8b5414["agent_c"]
+  subgraph g_ca174632a6f0cbfdeb7aba0f6ac2615b["agent_c"]
     n13[/activated/]
     n14[llm.requested]
     n15[llm.responded $0.0021]
@@ -35,7 +35,7 @@ flowchart TD
     n27[reply.received]
     n28[returned]
   end
-  subgraph g_136735d70725098af049298e4fbb1d44["agent_d"]
+  subgraph g_62da8ea4a0cc572cc8d3c9ecea4f3272["agent_d"]
     n20[/activated/]
     n21[llm.requested]
     n22[llm.responded $0.0021]
