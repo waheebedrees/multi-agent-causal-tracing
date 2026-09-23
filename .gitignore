@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv — keep uv.lock committed, ignore only the local cache
+.cache/uv/
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials.json
+
+# Local data and databases
+uploads/
+data/
+qdrant_local_data/
+*.db
+*.sqlite
+*.sqlite3
+example.db
+sessions/
+
+# Logs
+logs/
+*.log
+!pytest.log
+
+# Test / type / lint caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Generated graph artifacts — regenerate with `main()`
+docs/*.dot
+docs/*.png
+
+# Data / model artifacts
+*.pt
+*.pth
+*.onnx
+*.safetensors
+models/
+*.json
+*.jsonl
+tmp/
+*.tmp
+
+# Editors and OS
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (from your other ignore block — safe to keep)
+node_modules/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

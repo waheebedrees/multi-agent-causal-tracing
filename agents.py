@@ -63,6 +63,7 @@ class AgentState:
 
 class BaseAgent(ABC):
     model: str = "gpt-4o-mini"
+    role: str = "worker"
 
     def __init__(self, store: EventStore, bus: MessageBus, agent_id, session_id, trace_id):
         self.store = store
@@ -198,6 +199,7 @@ class BaseAgent(ABC):
 
         ) as span:
             span.set_attribute('agent.id', self.agent_id)
+            span.set_attribute("agent.role", self.role)
             span.set_attribute("messaging.destination", recipient)
             span.set_attribute("workflow.session_id", self.session_id)
             span.set_attribute("workflow.root_trace_id", self.trace_id)
@@ -257,6 +259,7 @@ class BaseAgent(ABC):
         ) as llm_span:
             llm_span.set_attribute("llm.model", self.model)
             llm_span.set_attribute('agent.id', self.agent_id)
+            llm_span.set_attribute("agent.role", self.role)
             llm_span.set_attribute("workflow.session_id", self.session_id)
             llm_span.set_attribute("workflow.root_trace_id", self.trace_id)
             request_event = self.emit(
@@ -298,6 +301,7 @@ class BaseAgent(ABC):
         ) as tool_span:
             tool_span.set_attribute('tool.name', tool_name)
             tool_span.set_attribute('agent.id', self.agent_id)
+            tool_span.set_attribute("agent.role", self.role)
             tool_span.set_attribute("workflow.session_id", self.session_id)
             tool_span.set_attribute("workflow.root_trace_id", self.trace_id)
             request_event = self.emit(
@@ -328,10 +332,29 @@ class BaseAgent(ABC):
 
 
 class AgentA(BaseAgent):
+    role = "orchestrator"
 
     def __init__(self, store, bus, agent_id, session_id, trace_id):
         super().__init__(store, bus, agent_id, session_id, trace_id)
 
+    def _create_object(self, *, span, spine_trigger, llm_req_evt_id, delegation_event_id):
+        obj_id = f"obj-{spine_trigger}"
+        obj = {
+            "id": obj_id,
+            "type": "claim",
+            "provenance": {
+                "created_by_event": spine_trigger,
+                "llm_request_event_id": llm_req_evt_id,
+                "delegated_from_event": delegation_event_id,
+            },
+        }
+        self.emit(
+            span,
+            f"{self.agent_id}.object.created",
+            payload={"object": obj},
+            caused_by=spine_trigger,
+        )
+        return obj_id
     def handle_message(self, message: InterAgentMessage):
 
         with self.tracer.start_as_current_span(
@@ -341,6 +364,7 @@ class AgentA(BaseAgent):
             links=self._incoming_links(message),
         ) as span:
             span.set_attribute('agent.id', self.agent_id)
+            span.set_attribute("agent.role", self.role)
             span.set_attribute("workflow.session_id", self.session_id)
             span.set_attribute("workflow.root_trace_id", self.trace_id)
             activated = self.emit(
@@ -350,15 +374,21 @@ class AgentA(BaseAgent):
                 payload={"task_instruction": message.task_instruction}
             )
 
-            llm_req, _response = self.call_llm(
+            llm_req_evt, _response = self.call_llm(
                 message.task_instruction, caused_by=activated.event_id)
+
+            self._create_object(
+                span=span,
+                spine_trigger=activated.event_id,
+                llm_req_evt_id=llm_req_evt.event_id,
+                delegation_event_id=message.caused_by_event_id
+            )
 
             # those are from the llm but for now we use those placeholder
             target_agent = 'agent_b'
             task = message.task_instruction
 
-            token = self.make_token(
-                target_agent, audience=target_agent, task=task)
+            token = self.make_token( target_agent, audience=target_agent, task=task)
 
             reply = self.send_message(
                 recipient=target_agent,
@@ -390,6 +420,8 @@ class AgentB(BaseAgent):
             links=self._incoming_links(message),
         ) as span:
             span.set_attribute('agent.id', self.agent_id)
+            span.set_attribute("agent.role", self.role)
+
             span.set_attribute("workflow.session_id", self.session_id)
             span.set_attribute("workflow.root_trace_id", self.trace_id)
 
@@ -402,8 +434,7 @@ class AgentB(BaseAgent):
                 payload={"task_instruction": message.task_instruction}
             )
 
-            llm_req_evt, _response = self.call_llm(
-                message.task_instruction, caused_by=activated.event_id)
+            llm_req_evt, _response = self.call_llm(message.task_instruction, caused_by=activated.event_id)
 
             # those are from the llm but for now we use those placeholder
             tool_name = 'lookup_data'
@@ -416,7 +447,7 @@ class AgentB(BaseAgent):
                 caused_by=activated.event_id,
             )
 
-            result = self._create_object(
+            self._create_object(
                 span=span,
                 spine_trigger=activated.event_id,
                 llm_req_evt=llm_req_evt,
@@ -453,6 +484,8 @@ class AgentC(BaseAgent):
             links=self._incoming_links(message),
         ) as span:
             span.set_attribute("agent.id", self.agent_id)
+            span.set_attribute("agent.role", self.role)
+
             span.set_attribute("workflow.session_id", self.session_id)
             span.set_attribute("workflow.root_trace_id", self.trace_id)
             self.validate_token(message)
@@ -510,6 +543,7 @@ class AgentD(BaseAgent):
             links=self._incoming_links(message),
         ) as span:
             span.set_attribute("agent.id", self.agent_id)
+            span.set_attribute("agent.role", self.role)
             span.set_attribute("workflow.session_id", self.session_id)
             span.set_attribute("workflow.root_trace_id", self.trace_id)
             self.validate_token(message)

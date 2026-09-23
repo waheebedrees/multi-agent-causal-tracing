@@ -12,9 +12,10 @@ MultiDiGraph is used so both edge types can coexist between the same pair
 of nodes without overwriting each other.
 
 Exports:
-    to_mermaid() — paste into README / GitHub / https://mermaid.live
-    to_dot()     — `dot -Tsvg -o graph.svg < graph.dot`
-    to_ascii()   — terminal fallback, no dependencies 
+    to_mermaid()   — paste into README / GitHub / https://mermaid.live
+    to_dot()       — `dot -Tsvg -o graph.svg < graph.dot`
+    to_ascii()     — terminal fallback, no dependencies
+    to_markdown()  — write a fenced ```mermaid block to a .md file
     save_mermaid / save_dot / save_png
 """
 from __future__ import annotations
@@ -28,15 +29,15 @@ from models import CausalEvent
 
 
 _ACTOR_COLORS = {
-    "orchestrator": "#6b7280",   # gray
-    "agent_a":      "#2563eb",   # blue
-    "agent_b":      "#dc2626",   # red
-    "agent_c":      "#059669",   # green
-    "agent_d":      "#d97706",   # amber
+    "user":    "#6b7280",   # gray   — operator / boundary
+    "agent_a": "#2563eb",   # blue   — orchestrator
+    "agent_b": "#dc2626",   # red    — worker
+    "agent_c": "#059669",   # green  — worker
+    "agent_d": "#d97706",   # amber  — worker
 }
 _DEFAULT_COLOR = "#9333ea"
 
-_KNOWN_AGENTS = {"orchestrator", "agent_a", "agent_b", "agent_c", "agent_d"}
+_KNOWN_AGENTS = {"user", "agent_a", "agent_b", "agent_c", "agent_d"}
 
 
 def _actor_color(actor: str) -> str:
@@ -79,7 +80,6 @@ def _mermaid_shape(short_type: str, label: str) -> str:
     if short_type == "activated":
         return f"[/{label}/]"           # parallelogram: activation
     return f"[{label}]"
-
 
 
 class CausalGraphBuilder:
@@ -222,7 +222,11 @@ class CausalGraphBuilder:
             return "events"
         if group_by == "actor":
             return f"{gname}  ({len(nids)} events)"
-        actors = sorted({self.g.nodes[n]["actor"] for n in nids})
+
+        # trace mode — if one actor, just show the actor name.
+        actors = sorted({g.nodes[n]["actor"] for n in nids})
+        if len(actors) == 1:
+            return actors[0]
         actor_part = ", ".join(actors) if actors else "?"
         return f"trace {gname[:8]}  ({actor_part})"
 
@@ -243,12 +247,11 @@ class CausalGraphBuilder:
                 f'  "{nid}" [label="{label}", fillcolor="{color}", '
                 f'fontcolor="white"];'
             )
+        # style already distinguishes causes (solid) from contains (dashed);
+        # drop the redundant label to keep large graphs readable.
         for u, v, k, d in g.edges(keys=True, data=True):
             style = "solid" if d.get("type") == "causes" else "dashed"
-            label = d.get("type", "")
-            lines.append(
-                f'  "{u}" -> "{v}" [style={style}, label="{label}"];'
-            )
+            lines.append(f'  "{u}" -> "{v}" [style={style}];')
         lines.append("}")
         return "\n".join(lines)
 
@@ -262,7 +265,7 @@ class CausalGraphBuilder:
         out.append(f"  events          : {s['events']}")
         out.append(f"  causes edges    : {s['causes_edges']}")
         out.append(f"  contains edges  : {s['contains_edges']}")
-        out.append(f"  agents          : {', '.join(s['agents'])}")
+        out.append(f"  agents          : {', '.join(s['agents']) or '(none)'}")
         out.append(f"  traces          : {s['traces']}")
         out.append(f"  total cost      : ${s['total_cost_usd']:.4f}")
         out.append("")
@@ -292,11 +295,13 @@ class CausalGraphBuilder:
     def save_mermaid(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as f:
             f.write(self.to_mermaid())
-            
-            
+
     def to_markdown(self, path: str) -> None:
+        """Write a fenced ```mermaid block, ready to embed in a README."""
         with open(path, "w", encoding="utf-8") as f:
-            f.write("```mermaid\n" + self.to_mermaid() + "\n ```")
+            f.write("```mermaid\n")
+            f.write(self.to_mermaid())
+            f.write("\n```\n")
 
     def save_dot(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as f:
@@ -316,14 +321,25 @@ class CausalGraphBuilder:
 
         pos = nx.spring_layout(g, seed=seed, k=0.9)
         colors = [_actor_color(g.nodes[n]["actor"]) for n in g.nodes()]
-        labels = {n: g.nodes[n]["short_type"] for n in g.nodes()}
 
-        plt.figure(figsize=(12, 8))
+        # label with actor + cost so the PNG is self-describing
+        labels = {}
+        for n in g.nodes():
+            d = g.nodes[n]
+            s = f'{d["short_type"]}\n{d["actor"]}'
+            if d["cost_usd"] is not None:
+                try:
+                    s += f'\n${float(d["cost_usd"]):.4f}'
+                except (TypeError, ValueError):
+                    pass
+            labels[n] = s
+
+        plt.figure(figsize=(14, 10))
         nx.draw_networkx_edges(g, pos, arrows=True, arrowsize=14,
                                edge_color="#444", width=1.2)
-        nx.draw_networkx_nodes(g, pos, node_color=colors, node_size=1400,
+        nx.draw_networkx_nodes(g, pos, node_color=colors, node_size=1600,
                                edgecolors="#111", linewidths=0.8)
-        nx.draw_networkx_labels(g, pos, labels=labels, font_size=8,
+        nx.draw_networkx_labels(g, pos, labels=labels, font_size=7,
                                 font_color="white", font_weight="bold")
         plt.axis("off")
         plt.savefig(path, dpi=150, bbox_inches="tight")

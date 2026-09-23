@@ -1,56 +1,183 @@
 # Multi-Agent Causal Tracing — Trial
 
-A minimal four-agent delegation workflow instrumented with **OpenTelemetry**, an **append-only causal event store**, and a **causal graph projection**, built to demonstrate that causation across autonomous agents can be distinguished from mere temporal correlation.
+A four-agent delegation workflow instrumented with **OpenTelemetry**, an **append-only causal event store**, and a **causal graph projection**, built to demonstrate that causation across autonomous agents can be distinguished from mere temporal correlation.
 
-The trial asks: *can we determine not only that multiple events happened near each other in time, but that one agent action actually caused or delegated the next?* This implementation answers yes, and shows how.
+The trial asks: *can we determine not only that multiple events happened near each other in time, but that one agent action actually caused or delegated the next?* This implementation answers yes — and shows how.
 
 ---
 
 ## What it does
 
-A user task flows through four agents in a delegation chain:
+A user triggers a task; one orchestrator agent reasons about it, produces an intermediate claim, and delegates execution to three worker agents in sequence. Each worker runs an LLM call, invokes a tool, produces an object with declared provenance, and hands off (except the last, which replies upward).
 
 ```
-User Task
-   │
-   ▼
-workflow.root (orchestrator)
-   │  delegates
-   ▼
-agent_a ──llm──> delegated ──▶ agent_b ──llm──> tool ──> object ──▶ agent_c
-                                                                     │
-                                                                     ▼
-                                                                  agent_d
-                                                                     │
-                                                                     ▼
-                                                                  returns
+user
+ │  task.started
+ ▼
+agent_a  (orchestrator)        ── llm ──> object ──> delegated
+                                                     │
+                                                     ▼
+agent_b  (worker)              ── llm ──> tool ──> object ──> delegated
+                                                                │
+                                                                ▼
+agent_c  (worker)              ── llm ──> tool ──> object ──> delegated
+                                                                │
+                                                                ▼
+agent_d  (worker)              ── llm ──> tool ──> object
+ │  returned ↑ through c → b → a
+ ▼
+user
+ │  task.completed
 ```
 
-Every agent:
-- runs an LLM call (`llm.requested` → `llm.responded`)
-- invokes a tool (`tool.requested` → `tool.responded`)
-- creates an artifact with declared provenance (`object.created`)
-- delegates to the next agent with a signed JWT (except the leaf, which replies upward)
+**Three tiers, three responsibilities:**
+
+| Tier | Actor | Role | Owns |
+|---|---|---|---|
+| Boundary | `user` | operator | `task.started`, `task.completed`, `task.failed` |
+| Coordination | `agent_a` | orchestrator | plans, produces claim, delegates to workers |
+| Execution | `agent_b`, `agent_c`, `agent_d` | workers | each runs one tool and hands off |
 
 Three independent views of the same run are produced:
 
 | View | What it shows | Where it lives |
 |---|---|---|
-| **OpenTelemetry spans** | Physical timing, one trace per agent, cross-agent edges as `Link` | stdout (ConsoleSpanExporter) |
-| **Causal event store** | Immutable business events with explicit `caused_by` | SQLite (`:memory:` in the demo) |
-| **Causal graph** | Projection of events into a directed graph | Mermaid / DOT / ASCII |
+| **OpenTelemetry spans** | Physical timing, one trace per agent, cross-agent edges as `Link` | stdout (`ConsoleSpanExporter`) |
+| **Causal event store** | Immutable events with explicit `caused_by` | SQLite (`:memory:` in the demo) |
+| **Causal graph** | Projection of events into a directed graph | Mermaid / DOT / SVG / ASCII |
 
 ---
+## Visualization
+
+The causal graph for one run. Node colors mark the actor; node shapes mark the event type (circle = workflow boundary, parallelogram = agent activation, flag = delegation, stadium = artifact, rectangle = everything else). **Solid thick arrows (`==>`) are causal edges** (`caused_by`); **dotted arrows (`-.->`) are structural containment** (`parent_span_id`).
+
+Note that solid arrows cross subgraph boundaries — that's causation across agent traces. Dotted arrows never do — structural nesting stays within one agent's trace.
+
+The graph below is from one representative run; session ids and costs will differ on your machine, but the topology is identical.
+```mermaid
+flowchart TD
+  subgraph g_11aa035cfdac950d9bd4db06502b0594["user"]
+    n0((task.started))
+    n33((task.completed))
+  end
+  subgraph g_e588f28ae0d0f0c407bfb817ac2f1e2d["agent_a"]
+    n1[/activated/]
+    n2[llm.requested]
+    n3[llm.responded $0.0021]
+    n4([object.created])
+    n5>delegated]
+    n31[reply.received]
+    n32[returned]
+  end
+  subgraph g_3fecdf53ebbc16ec23335cf192a14fb7["agent_b"]
+    n6[/activated/]
+    n7[llm.requested]
+    n8[llm.responded $0.0021]
+    n9[tool.requested]
+    n10[tool.responded $0.0003]
+    n11([object.created])
+    n12>delegated]
+    n29[reply.received]
+    n30[returned]
+  end
+  subgraph g_c7520b8cb7a438a233094f767d8b5414["agent_c"]
+    n13[/activated/]
+    n14[llm.requested]
+    n15[llm.responded $0.0021]
+    n16[tool.requested]
+    n17[tool.responded $0.0004]
+    n18([object.created])
+    n19>delegated]
+    n27[reply.received]
+    n28[returned]
+  end
+  subgraph g_136735d70725098af049298e4fbb1d44["agent_d"]
+    n20[/activated/]
+    n21[llm.requested]
+    n22[llm.responded $0.0021]
+    n23[tool.requested]
+    n24[tool.responded $0.0002]
+    n25([object.created])
+    n26[returned]
+  end
+  n0 ==> n1
+  n1 ==> n2
+  n1 ==> n4
+  n1 -.-> n3
+  n1 -.-> n5
+  n1 -.-> n31
+  n2 ==> n3
+  n3 ==> n5
+  n5 ==> n6
+  n6 ==> n7
+  n6 ==> n9
+  n6 ==> n11
+  n6 -.-> n8
+  n6 -.-> n10
+  n6 -.-> n12
+  n6 -.-> n29
+  n7 ==> n8
+  n8 ==> n12
+  n9 ==> n10
+  n12 ==> n13
+  n13 ==> n14
+  n13 ==> n16
+  n13 ==> n18
+  n13 -.-> n15
+  n13 -.-> n17
+  n13 -.-> n19
+  n13 -.-> n27
+  n14 ==> n15
+  n15 ==> n19
+  n16 ==> n17
+  n19 ==> n20
+  n20 ==> n21
+  n20 ==> n23
+  n20 ==> n25
+  n20 -.-> n22
+  n20 -.-> n24
+  n21 ==> n22
+  n23 ==> n24
+  n25 ==> n26
+  n26 ==> n27
+  n27 ==> n28
+  n28 ==> n29
+  n29 ==> n30
+  n30 ==> n31
+  n31 ==> n32
+  n32 ==> n33
+  classDef g_agent_a fill:#2563eb,color:#fff,stroke:#111,stroke-width:1px
+  classDef g_agent_b fill:#dc2626,color:#fff,stroke:#111,stroke-width:1px
+  classDef g_agent_c fill:#059669,color:#fff,stroke:#111,stroke-width:1px
+  classDef g_agent_d fill:#d97706,color:#fff,stroke:#111,stroke-width:1px
+  classDef g_user fill:#6b7280,color:#fff,stroke:#111,stroke-width:1px
+  class n1,n2,n3,n4,n5,n31,n32 g_agent_a
+  class n6,n7,n8,n9,n10,n11,n12,n29,n30 g_agent_b
+  class n13,n14,n15,n16,n17,n18,n19,n27,n28 g_agent_c
+  class n20,n21,n22,n23,n24,n25,n26 g_agent_d
+  class n0,n33 g_user
+```
+
+
+For a static render, `docs/causal_graph.svg` (produced by the run) is the same graph exported by Graphviz.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - `opentelemetry-sdk`, `opentelemetry-api`
 - `networkx`
 - `pyjwt`, `cryptography`
-- Optional: `matplotlib` (for PNG export), Graphviz (for DOT rendering)
+- Optional: `matplotlib` (PNG export), Graphviz (`dot` for SVG/DOT rendering)
 
 ## Setup
+
+With `uv` (recommended — a `pyproject.toml` and `uv.lock` are included):
+
+```bash
+uv sync
+```
+
+With plain `pip`:
 
 ```bash
 python -m venv .venv
@@ -60,73 +187,92 @@ pip install opentelemetry-sdk opentelemetry-api networkx pyjwt cryptography
 
 ## Run
 
+Two entry points, both in `main.py`:
+
 ```bash
-python main.py
+python main.py                     # runs main() — single workflow, full chain + graph
 ```
 
-This produces:
-1. A JSON span dump (one object per span, printed when each span ends)
+`main()` runs one workflow end-to-end and writes graph artifacts to `./docs/`:
+
+1. JSON span dump (one object per span, printed at `span.end()`)
 2. The human-readable causal chain of the final object
 3. A cost report aggregated by `session_id`
-4. `causal_graph.mmd` (Mermaid) and `causal_graph.dot` (Graphviz)
+4. `docs/causal_graph.{mmd,dot,md}`
+
+To exercise the three-workflow demo (disjoint workflows, span links, error path):
+
+```bash
+python -c "from main import main2; main2()"
+```
+
+`main2()` runs three workflows in one store:
+
+- **W1** — happy path
+- **W2** — a separate workflow whose root span is `Link`-ed to W1's root (temporal, not causal)
+- **W3** — error path where a tool raises and the workflow unwinds
+
+and prints per-workflow cost reports plus a DAG validation summary.
 
 ### Rendering the graph
 
-- **Mermaid:** paste `causal_graph.mmd` at <https://mermaid.live>, or open it in VS Code with a Mermaid preview extension
-- **Graphviz:** `dot -Tsvg -o causal_graph.svg causal_graph.dot`
-- **PNG:** uncomment `builder.save_png("causal_graph.png")` in `main()`
-
+- **Mermaid:** paste `docs/causal_graph.mmd` at <https://mermaid.live>, or open `docs/causal_graph.md` in VS Code with a Mermaid preview extension
+- **Graphviz:** `dot -Tsvg -o docs/causal_graph.svg docs/causal_graph.dot`
+- **PNG:** `dot -Tpng -o docs/causal_graph.png docs/causal_graph.dot`
 ---
 
 ## Repository layout
 
 | File | Purpose |
 |---|---|
-| `message_bus.py` | message bus |
-| `agents.py` | Agents|
+| `main.py` | `run_workflow`, `main()` (single run), `main2()` (three-run demo) |
+| `agents.py` | `BaseAgent` and the four agent implementations |
+| `message_bus.py` | `InterAgentMessage`, in-process `MessageBus` |
 | `models.py` | `CausalEvent`, `CostReport` |
 | `event_store.py` | Append-only event store (SQLite) |
-| `helpers.py` | ID/hash/JWT/DAG helpers |
+| `helpers.py` | ID / hash / JWT / DAG helpers |
 | `tracing.py` | OpenTelemetry provider + exporter |
 | `graph.py` | `CausalGraphBuilder`, Mermaid/DOT/ASCII exporters |
 | `audit.py` | `causal_chain`, `cost_report` |
-| `main.py` |  workflow driver |
+| `docs/` | Generated graph artifacts |
 
 ---
 
 ## Sample output
 
-```
-trace_id   = 628d74029d19e764d15e1eb73df7129d
-session_id = b25de8e3c4ad
+From the happy path:
 
-obj-e16efd0d85d0 (claim)
-  <- agent_d (09bccce8) agent_d.llm.requested  model=gpt-4o-mini
-     (2c2dc1f0) agent_d.llm.responded cost=$0.0021
-  <- agent_d (cf98f8e0) agent_d.tool.requested  tool=finalize_data
-     (e16efd0d) agent_d.tool.responded cost=$0.0002
-  <- agent_d (22ca8753) agent_d.object.created
-    <- agent_d (b90aeed1) agent_d.activated
-      <- agent_c (78d005e9) agent_c.delegated
-        <- agent_c (9ef1f819) agent_c.llm.responded
-          <- agent_c (0a716557) agent_c.llm.requested
-            <- agent_c (ad90948f) agent_c.activated
-              <- agent_b (75c93043) agent_b.delegated
-                <- agent_b (bdbd1db9) agent_b.llm.responded
-                  <- agent_b (9677857f) agent_b.llm.requested
-                    <- agent_b (e902180a) agent_b.activated
-                      <- agent_a (fedf64e5) agent_a.delegated
-                        <- agent_a (daab7a3a) agent_a.llm.responded
-                          <- agent_a (c6a9c741) agent_a.llm.requested
-                            <- agent_a (f3b4db21) agent_a.activated
-                              <- orchestrator (0e7b59dd) task.started
+```
+trace_id   = 903f5a6686a6...              (root trace id)
+session_id = 4b414aa0b919                 (workflow correlation key)
+
+obj-c0a8e79e6803 (claim)
+  <- agent_d (fafc8e3c) agent_d.llm.requested  model=gpt-4o-mini
+     (dc8a3bbb) agent_d.llm.responded cost=$0.0021
+  <- agent_d (6ed5275f) agent_d.tool.requested  tool=finalize_data
+     (c0a8e79e) agent_d.tool.responded cost=$0.0002
+  <- agent_d (896566d4) agent_d.object.created
+    <- agent_d (72bce173) agent_d.activated
+      <- agent_c (3dba820e) agent_c.delegated
+        <- agent_c (7148e001) agent_c.llm.responded
+          <- agent_c (049fbe6c) agent_c.llm.requested
+            <- agent_c (0179d5d6) agent_c.activated
+              <- agent_b (ec5fc8fc) agent_b.delegated
+                <- agent_b (9313e834) agent_b.llm.responded
+                  <- agent_b (7d235fde) agent_b.llm.requested
+                    <- agent_b (d99c5cb4) agent_b.activated
+                      <- agent_a (285e1885) agent_a.delegated
+                        <- agent_a (aca80492) agent_a.llm.responded
+                          <- agent_a (5a9a61f5) agent_a.llm.requested
+                            <- agent_a (718bcce4) agent_a.activated
+                              <- user (869f8ff3) task.started
 ```
 
 ### Cost report
 
 ```
 ============================================================
-COST REPORT - trace b25de8e3c4ad...
+COST REPORT - trace 903f5a6686a6...
 ============================================================
   LLM calls:    4
   Tool calls:   3
@@ -149,12 +295,35 @@ COST REPORT - trace b25de8e3c4ad...
 ### Causal graph summary
 
 ```
-  events          : 33
-  causes edges    : 32
+  events          : 34
+  causes edges    : 33
   contains edges  : 13
-  agents          : agent_a, agent_b, agent_c, agent_d, orchestrator
+  agents          : agent_a, agent_b, agent_c, agent_d, user
   traces          : 5
   total cost      : $0.0093
+```
+
+### DAG validation (from `main2()`)
+
+```
+nodes=80  edges=107
+OK - 3 disjoint causal DAGs, no shared causes-edges
+causes-only subgraph: 80 nodes, 77 edges
+```
+
+### Error path
+
+```
+chain to failure:
+  <- user (1c82a229c8ad) task.failed
+    <- agent_b (b9dfa8678948) agent_b.tool.failed
+      <- agent_b (67a745948c0f) agent_b.tool.requested
+        <- agent_b (bf447166d425) agent_b.activated
+          <- agent_a (8a09b7deaeda) agent_a.delegated
+            <- agent_a (da5516c2fac7) agent_a.llm.responded
+              <- agent_a (7cbc3e138b37) agent_a.llm.requested
+                <- agent_a (ff82b857b2e4) agent_a.activated
+                  <- user (f39607d5d2c2) task.started
 ```
 
 ---
@@ -171,7 +340,7 @@ CausalEvent(
     parent_span_id,  # structural nesting (may be None)
     caused_by,       # ← the causal pointer: the event that caused this one
     session_id,      # business-level workflow key (shared across all agents)
-    actor,           # logical agent identity
+    actor,           # logical identity: "user" | "agent_a" | "agent_b" | ...
     event_type,      # e.g. "agent_b.llm.requested"
     timestamp,       # wall-clock, informational only
     sequence_num,    # monotonic, assigned by the store, defines order
@@ -182,62 +351,58 @@ CausalEvent(
 
 The load-bearing field is **`caused_by`**. Nothing else in the system infers causality.
 
+Each span carries four identifying attributes:
+
+```json
+"agent.id": "agent_b",
+"agent.role": "worker",
+"workflow.session_id": "<session>",
+"workflow.root_trace_id": "<root trace>"
+```
+
+`agent.role` distinguishes the orchestrator (`agent_a`) from the workers (`agent_b/c/d`); `workflow.session_id` is the workflow-wide correlation key; `workflow.root_trace_id` links every agent's trace back to the workflow's origin.
+
 ---
 
 ## How causality is preserved
 
 ### 1. Causation is a first-class field, not a timing inference
 
-Every event carries an explicit `caused_by` that points at another event's `event_id`. The graph projection draws edges only from this field. No edge is ever inferred from timestamps, from "happened in the same trace," or from any other proxy.
+Every event carries an explicit `caused_by`. The graph projection draws edges only from this field. No edge is ever inferred from timestamps, from "happened in the same trace," or any other proxy.
 
 ### 2. Causation ≠ nesting
 
-OpenTelemetry's `parent_span_id` and `caused_by` are kept strictly separate:
-
-- `parent_span_id` → structural nesting ("this ran inside that span")
-- `caused_by` → semantic causality ("this made that happen")
-
-The graph emits both as distinct edge types (`contains` and `causes`), deduplicating when both would apply to the same ordered pair. The Mermaid and DOT exporters render them differently (thick vs. dotted), so a reader cannot confuse them.
+`parent_span_id` (structural nesting) and `caused_by` (semantic causality) are kept strictly separate. The graph emits both as distinct edge types (`contains` and `causes`) and deduplicates when both would apply to the same ordered pair. The Mermaid and DOT exporters render them differently (solid `==>` vs dotted `-.->`), so a reader cannot confuse them.
 
 ### 3. Cross-agent edges are stated, not implied
 
 Each agent is its own OTel trace. When agent A delegates to agent B:
 
-- A emits a `PRODUCER` span (`agent_a.send.agent_b`)
-- B's `handle_message` span is started with `context=Context()` (a fresh root, not a child) and a `Link` back to A's `PRODUCER` span with `rel="follows"`
+- A emits a `SpanKind.PRODUCER` span (`agent_a.send.agent_b`)
+- B's `handle_message` span is started with `context=Context()` (a fresh trace root, not a child) and a `Link` back to A's `PRODUCER` span with `rel="follows"`
 
-B's span has `parent_id=null` — no agent is a descendant of another. The cross-agent relationship is explicit in the `Link`, not a side effect of span nesting.
+B's span has `parent_id=null`. The cross-agent relationship is explicit in the `Link`, not a side effect of span nesting.
 
 ### 4. Branch points require explicit parent
 
-`emit()` defaults to the last emitted event of the same agent, which is correct for strictly linear sequences but wrong at any fork. Every branch (`llm` vs `tool` vs `object.created`, delegate vs reply) passes its own trigger explicitly:
+`emit()` defaults to the last event of the same agent, which is correct for strictly linear sequences but wrong at any fork. Every branch (`llm` vs `tool` vs `object.created`, delegate vs reply) passes its own trigger explicitly:
 
 ```python
-self.call_llm(task, caused_by=activated.event_id)
-self.call_tool(name, input, fn, caused_by=activated.event_id)
+self.call_llm(task,   caused_by=activated.event_id)
+self.call_tool(name,  ..., caused_by=activated.event_id)
 self._create_object(..., spine_trigger=activated.event_id)
+self.send_message(..., caused_by=_response.event_id)
 ```
 
 This eliminates false edges like `llm.responded → tool.requested` that the implicit default would otherwise produce.
 
-### 5. Business and physical identity are separate
+### 5. Temporal ordering is a different relation
 
-- `session_id` — business-level workflow key. Shared across every agent, every event, every span. Used for cost aggregation and workflow-wide queries.
-- `trace_id` — physical OTel trace. One per agent (five total in a run).
-- `workflow.root_trace_id` — the orchestrator's trace, carried as an attribute on every span so a backend can correlate all five traces back to one workflow.
-
-The causal walk (`causal_chain`) uses neither — it follows `caused_by` across trace boundaries, which is the only thing that actually connects events causally.
+`main2()` demonstrates this directly: W2 is `Link`-ed to W1 at the root span level, so a backend can see that W2 happened after W1. But no event in W2 has `caused_by` pointing at any event in W1 — and the DAG validation asserts that zero `causes` edges cross a `session_id` boundary. **The link records temporal ordering; the absence of a shared `caused_by` records that W1 did not cause W2.**
 
 ### 6. Authorization is bound to the same key
 
-Every delegation carries a signed JWT (`Ed25519`) whose:
-- `iss` = sender agent
-- `sub` = recipient agent
-- `aud` = recipient agent
-- `sid` = `session_id`
-- `task_hash` = hash of the delegated task
-
-The receiver verifies all five before taking any action. A rejected token surfaces as a `ContractViolation` on the receiving agent's span, which makes failed authorizations visible in the trace.
+Every delegation carries a signed JWT (`EdDSA`) whose `iss`/`sub`/`aud`/`sid`/`task_hash` are all checked by the receiver before any action. A rejected token surfaces as a `ContractViolation` on the receiving agent's span, making failed authorizations visible in the trace.
 
 ---
 
@@ -247,15 +412,15 @@ The receiver verifies all five before taking any action. A rejected token surfac
 
 2. **Ephemeral signing key.** `helpers._load_or_generate_signing_key` generates a fresh Ed25519 key per process unless `SIGNING_KEY_PEM` is set. Production needs a KMS or a JWKS endpoint.
 
-3. **`emit()` has an implicit fallback.** When `caused_by` is not passed, it defaults to the agent's last event. Every current caller is explicit at branch points, but the fallback could produce a false edge if a future caller forgets.
+3. **`emit()` has an implicit fallback.** When `caused_by` is not passed, it defaults to the agent's last event. All current callers are explicit at branch points, but the fallback could produce a false edge if a future caller forgets.
 
 4. **Single-process exporter.** Spans go to stdout via `ConsoleSpanExporter`. Production exports to an OTLP collector for retention and cross-service correlation.
 
-5. **`payload_hash` is written but not verified on read.** `CausalEvent` is frozen (immutable at the Python level), and the hash is stored, but the event store does not re-check it on `by_id()` / `by_trace()`. Adding a `_verify()` on read would make tampering detectable.
+5. **`payload_hash` is written but not verified on read.** `CausalEvent` is frozen (immutable at the Python level) and the hash is stored, but the event store does not re-check it on `by_id()` / `by_session_id()`. Adding a `_verify()` on read would make tampering detectable.
 
-6. **No failure-path test in the demo.** `call_tool` re-raises on error and `run_workflow` has a `task.failed` branch, but the sample run is the happy path. A second run with `run_workflow(store, "fail")` would exercise the error path.
+6. **Graph size.** The ASCII exporter is O(N) and fine for hundreds of events; Mermaid/DOT fine for a few thousand. Beyond that, push to Neo4j or an analytical graph store.
 
-7. **Graph size.** The ASCII exporter is O(N) and fine for hundreds of events; Mermaid/DOT fine for a few thousand. Beyond that, push to Neo4j or an analytical graph store.
+7. **No cross-process token propagation test.** The JWT is verified in-process. A distributed run would need to test token forwarding under partial failure (e.g., network partition between delegation and verification).
 
 ---
 
@@ -265,9 +430,10 @@ The receiver verifies all five before taking any action. A rejected token surfac
 
 - The three-layer split: physical spans / logical events / semantic graph.
 - `caused_by` as the load-bearing field on every event.
-- `session_id` (business) ≠ `trace_id` (physical).
+- `session_id` (business) ≠ `trace_id` (physical) ≠ `root_trace_id` (workflow origin).
 - `PRODUCER`/`CONSUMER` + `Link` for cross-agent edges.
 - Signed delegation tokens bound to session + subject + audience + task.
+- `Link` for temporal relationships that are explicitly *not* causal.
 
 **What changes first:**
 
@@ -277,7 +443,7 @@ The receiver verifies all five before taking any action. A rejected token surfac
 
 3. **Durable event store.** SQLite → Postgres with `session_id`, `caused_by`, and `sequence_num` indexed. The schema and query patterns stay the same.
 
-4. **Graph service.** Move the causal graph out of process memory into a graph database or materialized view so it can answer cross-session and cross-tenant queries.
+4. **Graph service.** Move the causal graph out of process memory into a graph database or materialized view for cross-session and cross-tenant queries.
 
 5. **Policy layer.** Add `authorized_by` and `scope` fields to each event so "was this action authorized, by whom, to what extent" can be answered without re-verifying tokens.
 
@@ -308,17 +474,18 @@ That is exactly what this codebase implements, at four agents, in one process.
 
 | Requirement | Where |
 |---|---|
-| 2–3 agents (implemented with 4 + orchestrator) | `AgentA`–`AgentD` |
-| Unique identity per agent | `agent.id` span attribute, `actor` event field |
+| 2–3 agents (implemented with 4 + orchestrator + user boundary) | `agents.py` |
+| Unique identity per agent | `agent.id` + `agent.role` span attributes; `actor` event field |
 | Shared task/session id | `workflow.session_id` on every span and event |
 | Agent-to-agent delegation | 4 hops, each with signed JWT |
 | Tool/resource interaction | 4 tool calls across agents, distinct tools |
 | Event logging with timestamps | `CausalEvent.timestamp` + `sequence_num` |
 | Parent/child event relationships | `parent_span_id` (structural) + `caused_by` (causal) |
 | Trace/correlation IDs | `trace_id` + `workflow.root_trace_id` + `session_id` |
-| Graph/structured output | `causal_graph.mmd` / `.dot` / `.ascii` |
-| OpenTelemetry | `PRODUCER`/`CONSUMER` kinds + `Link` for cross-agent |
+| Graph/structured output | `docs/causal_graph.{mmd,dot,md}`, `to_ascii()` |
+| Simple visualization | `docs/causal_graph.svg` + `.mmd` (renderable at mermaid.live) |
+| OpenTelemetry | `PRODUCER`/`CONSUMER` kinds + `Link` for cross-agent edges |
 | Working source + setup/run | this repository |
 | Example telemetry output | § *Sample output* |
-| Simple visualization | `causal_graph.mmd`, renderable at mermaid.live |
+| Simple visualization | `docs/causal_graph_*.svg`, renderable at mermaid.live |
 | Design writeup | § *How causality is preserved*, § *Limitations*, § *Scaling* |
