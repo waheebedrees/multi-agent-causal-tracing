@@ -1,5 +1,6 @@
 
 from __future__ import annotations
+from llm import LLMGateway, get_gateway
 from abc import ABC, abstractmethod
 import uuid
 import hashlib
@@ -61,15 +62,30 @@ class AgentState:
     parent_event_id: Optional[str] = None
 
 
+
 class BaseAgent(ABC):
     model: str = "gpt-4o-mini"
-    role: str = "worker"
+    role = "worker"
 
-    def __init__(self, store: EventStore, bus: MessageBus, agent_id, session_id, trace_id):
+    system_prompt: str = (
+        "You are one agent in a multi-agent workflow. Respond concisely."
+    )
+
+    def __init__(
+        self,
+        store: EventStore,
+        bus: MessageBus,
+        agent_id: str,
+        session_id: str,
+        trace_id: str,
+        llm: LLMGateway | None = None,
+    ) -> None:
         self.store = store
         self.bus = bus
         self.tracer = get_tracer()
         self.state = AgentState(agent_id, session_id, trace_id)
+        self.llm = llm or get_gateway()
+        self.model = self.llm.model
         self.bus.register(self.agent_id, self.handle_message)
 
     @property
@@ -196,7 +212,6 @@ class BaseAgent(ABC):
         with self.tracer.start_as_current_span(
             f"{self.agent_id}.send.{recipient}",
             kind=SpanKind.PRODUCER,
-
         ) as span:
             span.set_attribute('agent.id', self.agent_id)
             span.set_attribute("agent.role", self.role)
@@ -241,16 +256,8 @@ class BaseAgent(ABC):
 
             return reply
 
-    def _llm_gateway(self, prompt: str) -> dict:
-        h = hashlib.sha256(prompt.encode()).hexdigest()[:12]
-        return {
-            "model": self.model,
-            "prompt_hash": h,
-            "output_hash": hashlib.sha256((prompt + "::out").encode()).hexdigest()[:12],
-            "cost_usd": 0.0021,
-            "tokens": 1200,
-            "cache_hit": False,
-        }
+    def _llm_gateway(self, prompt: str) -> dict[str, Any]:
+        return self.llm.complete(prompt, system=self.system_prompt)
 
     def call_llm(self, prompt: str, caused_by: Optional[str] = None):
         with self.tracer.start_as_current_span(
@@ -262,6 +269,7 @@ class BaseAgent(ABC):
             llm_span.set_attribute("agent.role", self.role)
             llm_span.set_attribute("workflow.session_id", self.session_id)
             llm_span.set_attribute("workflow.root_trace_id", self.trace_id)
+
             request_event = self.emit(
                 llm_span,
                 f'{self.agent_id}.llm.requested',
@@ -270,14 +278,17 @@ class BaseAgent(ABC):
             )
             try:
                 response = self._llm_gateway(prompt)
-                llm_span.set_attribute(
-                    "llm.cost_usd", response.get('cost_usd', 0))
                 response_event = self.emit(
                     llm_span,
                     event_type=f"{self.agent_id}.llm.responded",
                     payload=response,
                     caused_by=request_event.event_id
                 )
+                llm_span.set_attribute("llm.cost_usd", response.get("cost_usd", 0))
+                llm_span.set_attribute("llm.tokens", response.get("tokens", 0))
+                llm_span.set_attribute("llm.response.length",len(response.get("text", "")))
+                llm_span.set_attribute("llm.response.preview", response.get("text", "")[:120])
+
                 return request_event, response_event
 
             except Exception as exc:
@@ -331,11 +342,16 @@ class BaseAgent(ABC):
                 raise
 
 
+
+
+
 class AgentA(BaseAgent):
     role = "orchestrator"
+    system_prompt = (
+        "You are the orchestrating agent. Analyze the incoming task, "
+        "state what you will do first, and hand off to the lookup specialist."
+    )
 
-    def __init__(self, store, bus, agent_id, session_id, trace_id):
-        super().__init__(store, bus, agent_id, session_id, trace_id)
 
     def _create_object(self, *, span, spine_trigger, llm_req_evt_id, delegation_event_id):
         obj_id = f"obj-{spine_trigger}"
@@ -403,9 +419,11 @@ class AgentA(BaseAgent):
 
 
 class AgentB(BaseAgent):
-
-    def __init__(self, store, bus, agent_id, session_id, trace_id):
-        super().__init__(store, bus, agent_id, session_id, trace_id)
+    role = "worker"
+    system_prompt = (
+        "You are the lookup worker. Given the task, describe the data you "
+        "would retrieve and hand off to the transform specialist."
+    )
 
     @staticmethod
     def lookup_data(query: str):
@@ -471,6 +489,12 @@ class AgentB(BaseAgent):
 
 
 class AgentC(BaseAgent):
+    role = "worker"
+    system_prompt = (
+        "You are the transform worker. Describe how you would transform the "
+        "looked-up data and hand off to the finalizer."
+    )
+    
     @staticmethod
     def transform_data(query: str):
         return transform_data(query)
@@ -530,6 +554,11 @@ class AgentC(BaseAgent):
 
 
 class AgentD(BaseAgent):
+    role = "worker"
+    system_prompt = (
+        "You are the finalizer. Produce the final answer for the user."
+    )
+
     @staticmethod
     def finalize_data(query: str):
         return finalize_data(query)

@@ -170,6 +170,7 @@ For a static render, `docs/causal_graph.svg` (produced by the run) is the same g
 - `opentelemetry-sdk`, `opentelemetry-api`
 - `networkx`
 - `pyjwt`, `cryptography`
+- `openai` (only if you want real LLM calls; otherwise the demo uses a mock)
 - Optional: `matplotlib` (PNG export), Graphviz (`dot` for SVG/DOT rendering)
 
 ## Setup

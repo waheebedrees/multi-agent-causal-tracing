@@ -1,22 +1,22 @@
 ```mermaid
 flowchart TD
-  subgraph g_c6682a8c64b09e067c44c206b64aa4d7["user"]
+  subgraph g_5b578cef1c87f39ef106f523c40162ca["user"]
     n0((task.started))
     n33((task.completed))
   end
-  subgraph g_373f26d3e98beeb8a117594c311d22b6["agent_a"]
+  subgraph g_57942823085ae2de91839341a31c8161["agent_a"]
     n1[/activated/]
     n2[llm.requested]
-    n3[llm.responded $0.0021]
+    n3[llm.responded $0.0002]
     n4([object.created])
     n5>delegated]
     n31[reply.received]
     n32[returned]
   end
-  subgraph g_a881181d9f4315bfb392bc65f4ee5d05["agent_b"]
+  subgraph g_3b4ed43fad4c390eb931b8c9400e0979["agent_b"]
     n6[/activated/]
     n7[llm.requested]
-    n8[llm.responded $0.0021]
+    n8[llm.responded $0.0002]
     n9[tool.requested]
     n10[tool.responded $0.0003]
     n11([object.created])
@@ -24,10 +24,10 @@ flowchart TD
     n29[reply.received]
     n30[returned]
   end
-  subgraph g_ca174632a6f0cbfdeb7aba0f6ac2615b["agent_c"]
+  subgraph g_77d6388f0748e37ddb020e43e5faab48["agent_c"]
     n13[/activated/]
     n14[llm.requested]
-    n15[llm.responded $0.0021]
+    n15[llm.responded $0.0002]
     n16[tool.requested]
     n17[tool.responded $0.0004]
     n18([object.created])
@@ -35,10 +35,10 @@ flowchart TD
     n27[reply.received]
     n28[returned]
   end
-  subgraph g_62da8ea4a0cc572cc8d3c9ecea4f3272["agent_d"]
+  subgraph g_335f8df791c565d4c84bd4fbf90134c5["agent_d"]
     n20[/activated/]
     n21[llm.requested]
-    n22[llm.responded $0.0021]
+    n22[llm.responded $0.0002]
     n23[tool.requested]
     n24[tool.responded $0.0002]
     n25([object.created])
