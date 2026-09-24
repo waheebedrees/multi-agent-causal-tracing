@@ -8,6 +8,7 @@ from typing import Optional
 from opentelemetry.trace import Link, SpanContext, SpanKind
 
 
+
 from helpers import causes_only, enforce
 from models import CausalEvent
 from event_store import EventStore
@@ -16,16 +17,19 @@ from graph import CausalGraphBuilder
 from audit import causal_chain, cost_report
 from message_bus import InterAgentMessage, MessageBus
 from agents import AgentA, AgentB, AgentC, AgentD
+from llm import get_gateway
 
 def run_workflow(
     store: EventStore,
     task: str,
     session_id: str,
-    link_to: Optional[SpanContext] = None
+    link_to: Optional[SpanContext] = None,
+    llm = None
 ) -> tuple[str, str, SpanContext]:
-
+    
     tracer = get_tracer(False)
     bus = MessageBus()
+    llm = llm or get_gateway()
 
     links = []
     if link_to is not None:
@@ -45,13 +49,13 @@ def run_workflow(
 
         root_ctx = root.get_span_context()
 
-        AgentA(store, bus=bus, agent_id="agent_a",
+        AgentA(store, bus=bus, llm=llm, agent_id="agent_a",
                session_id=session_id, trace_id=trace_id)
-        AgentB(store, bus=bus, agent_id="agent_b",
+        AgentB(store, bus=bus, llm=llm, agent_id="agent_b",
                session_id=session_id, trace_id=trace_id)
-        AgentC(store, bus=bus, agent_id="agent_c",
+        AgentC(store, bus=bus, llm=llm, agent_id="agent_c",
                session_id=session_id, trace_id=trace_id)
-        AgentD(store, bus=bus, agent_id="agent_d",
+        AgentD(store, bus=bus, llm=llm, agent_id="agent_d",
                session_id=session_id, trace_id=trace_id)
 
         root_evt = store.append(CausalEvent.create(
@@ -119,6 +123,17 @@ def scenario_single(store: EventStore, out_dir: str = "./docs") -> None:
     cost_report(store, session).print()
     _write_graph(store, session, out_dir)
 
+    print("\n" + "=" * 72)
+    print("LLM RESPONSES")
+    print("=" * 72)
+    for e in store.by_session_id(session):
+        if not e.event_type.endswith("llm.responded"):
+            continue
+        text = e.payload.get("text", "(no text)")
+        preview = text if len(text) <= 300 else text[:300] + "…"
+        print(f"\n[{e.actor}]  tokens={e.payload.get('tokens')}  "
+              f"cost=${e.payload.get('cost_usd', 0):.6f}")
+        print(f"  {preview}")
 
 def scenario_three(store: EventStore, out_dir: str = "./docs") -> None:
     """Happy path, span-linked workflow, error path — in one store."""
